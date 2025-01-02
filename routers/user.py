@@ -22,7 +22,6 @@ from models.requests import Learner, StaffMember, UserUpdate, UserType
 from models.responses import LearnerInDB, StaffInDB
 from utils.security import get_current_active_user, get_password_hash
 from utils.helpers import get_learners_in_blocks, find_user, update_a_user
-from database import database
 from utils.helpers import serialize_user_in_db
 
 from pprint import pprint

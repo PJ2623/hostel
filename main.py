@@ -1,25 +1,35 @@
 from fastapi import FastAPI
-from fastapi_limiter import FastAPILimiter
+from fastapi.middleware.cors import CORSMiddleware
 
 from contextlib import asynccontextmanager
 
 from routers import user, duties, auth
 
-from cache import redis
-
+from motor.motor_asyncio import AsyncIOMotorClient
+from beanie import init_beanie
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
-    await FastAPILimiter.init(redis)
+async def connect_to_mongo(app: FastAPI):
+    # * Connect to MongoDB
+    client = AsyncIOMotorClient("mongodb://localhost:27017")
+    
+    await init_beanie(database=client["greenCloudMVP"], document_models=[])
     yield
-    await FastAPILimiter.close()
     
 
 app = FastAPI(
     title="Hostel Management",
     description="An API for St Joseph's Hostel Management",
-    lifespan=lifespan,
+    lifespan=connect_to_mongo,
     debug=True
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(user.router)

@@ -5,7 +5,6 @@ from datetime import datetime
 from fastapi import HTTPException, status
 
 from models.responses import LearnerInDB, StaffInDB
-from database import database
 
 def serialize_user_in_db(user_in_db: dict):
     '''Serializes `user_in_db`
@@ -75,17 +74,9 @@ async def get_learners_in_blocks(block1: str, block2:str):
 
 async def find_user(id: str, role: str) -> dict:
     '''
-    Retrieves a user from the database that the user with `id` and `role`
-    Is allowed to retrieve    
+    Retrieves a user from the database with `id` and `role`    
     '''
-    if role == "super-user":
-        user_in_db = await database.users.find_one({'_id': id, 'active': True})
-    elif role == "jr-matron":
-        user_in_db = await database.users.find_one({'_id': id, "type": "learner", "block": {"$in": ["A", "B"]}})
-    else:
-        user_in_db = await database.users.find_one({'_id': id, "type": "learner", "block": {"$in": ["C", "D"]}})
-        
-    return user_in_db
+    pass
  
 
 def is_user_accessing_own_account(id: str, current_user_id: str):

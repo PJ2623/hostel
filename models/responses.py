@@ -1,15 +1,8 @@
-import re
-import enum
-
-from fastapi import status, HTTPException
-
-from pydantic import BaseModel, Field, field_validator, model_validator, field_validator
+from pydantic import BaseModel, Field
 
 from typing import Annotated
 
 from . requests import LearnerBlock, UserBase, StaffRole
-
-from bson.binary import Binary
 
 
 class UserInDB(UserBase):

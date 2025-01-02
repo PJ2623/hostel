@@ -1,0 +1,1 @@
+"""Contains all the schemas of the API."""
