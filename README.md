@@ -13,7 +13,7 @@ Each grade has their own **block** or dorm, with grades 11 and 12, sharing the s
 
 ## Main API Functionalities
 
-The API was design to take care of the most common hostel management activities carried out by the supervisors
+The API was designed to take care of the most common hostel management activities carried out by the supervisors
 which are:
 
 - Taking attendance for daily evening study sessions, and afternoon sessions on Sundays
