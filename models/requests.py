@@ -5,34 +5,16 @@ from fastapi import status, HTTPException
 
 from pydantic import BaseModel, Field, field_validator, model_validator, field_validator
 
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Literal
 
 from typing_extensions import Self
-
-
-class LearnerBlock(enum.Enum):
-    A = 'A'
-    B = 'B'
-    C = 'C'
-    D = 'D'
-    
-
-class UserType(enum.Enum):
-    LEARNER = 'learner'
-    STAFF = 'staff'
-
-
-class StaffRole(enum.Enum):
-    JR_MATRON = 'jr-matron'
-    SR_MATRON = 'sr-matron'
-    SUPER_USER = 'super-user'
     
     
 class UserBase(BaseModel):
     id: Annotated[str, Field(min_length=4, max_length=20, examples=['John'], alias='_id')]
     first_name: Annotated[str, Field(min_length=2, max_length=20, examples=['John'])]
     last_name: Annotated[str, Field(min_length=2, max_length=20, examples=['Doe'])]
-    type: Annotated[UserType, Field(description="The user's type", examples=["learner"])]
+    type: Annotated[Literal["learner", "staff"], Field(description="The user's type", examples=["learner"])]
     password: Annotated[str, Field(min_length=6, max_length=100, examples=["Password@123"], alias="password")]
 
 
@@ -100,7 +82,7 @@ class User(UserBase):
     
     
 class Learner(User):
-    block: Annotated[LearnerBlock, Field(description='The block the learner is in', examples=['D'])]
+    block: Annotated[Literal["A", "B", "C", "D"], Field(description='The block the learner is in', examples=['D'])]
     grade: Annotated[int, Field(description="Learner's grade")]
     
     
@@ -112,16 +94,16 @@ class Learner(User):
         
         error_msg =  HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Learner in grade {grade} cannot be in block {block.value}"
+            detail=f"Learner in grade {grade} cannot be in block {block}"
         )
         
-        if  block == LearnerBlock.A and not ( grade == 8 ):
+        if  block == "A" and not ( grade == 8 ):
             raise error_msg
-        elif block == LearnerBlock.B and not ( grade == 9 ):
+        elif block == "B" and not ( grade == 9 ):
             raise error_msg
-        elif block == LearnerBlock.C and not ( grade == 10 ):
+        elif block == "C" and not ( grade == 10 ):
             raise error_msg
-        elif block == LearnerBlock.D and not ( grade >= 11 ):
+        elif block == "D" and not ( grade >= 11 ):
             raise error_msg
         
         return self
@@ -139,17 +121,16 @@ class Learner(User):
 
 
 class StaffMember(User):
-    role: Annotated[StaffRole, Field(description='The role of the staff member being created')]
+    role: Annotated[Literal["jr-matron", "sr-matron", "super-user"], Field(description='The role of the staff member being created')]
     
     @model_validator(mode='after')
     def checks_user_type_is_valid_for_staff_member(self) -> Self:
         type = self.type
-        role = self.role
         
-        if not (type.value == "staff"):
+        if not (type == "staff"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"User type has to be staff to assign {role.value} role"
+                detail=f"Invalid user type for role {self.role}"
             )
         return self
 
