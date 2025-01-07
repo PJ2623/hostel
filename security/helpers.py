@@ -1,23 +1,22 @@
-import os
-
+import os, json
 from datetime import datetime, timedelta, timezone
 from pprint import pprint
-from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status, Security
+from fastapi import Depends, HTTPException, status, Security
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, SecurityScopes
-from jose import JWTError, jwt
+
+from jose import JWTError, jwt, jwe
 from jwt import InvalidTokenError
+from jose.exceptions import ExpiredSignatureError
+from . schemas import TokenData
+
+
 from passlib.context import CryptContext
 
-from database import database
-from models.responses import TokenData
-from models.responses import LearnerInDB, StaffInDB
-
-from jose.exceptions import ExpiredSignatureError
-
-
 from pydantic import ValidationError
+from typing import Annotated
+
+from models.staff import Staff
 
 from dotenv import load_dotenv
 
@@ -26,7 +25,21 @@ load_dotenv()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", scopes={"me": "Read information about the current user.", "get-l-s": "Get users of type learner or staff", "add-u": "Add user", "update-u": "Update a user", "add-u-i": "Add user image", "get-u-i": "Get user image", "get-u": "Get user", "delete-u": "Delete user", "add-d": "Add duty", "assign-s-d": "Assign special duties", "assign-d": "Assigned duties", "get-a-d": "Get assigned duties", "get-d": "Get duties", "update-d": "Update duty", "view-a-d": "View assigned duty", "delete-d": "Delete duty", "mark": "Mark assigned duty"})
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", scopes={
+    "me": "Read information about the current user.",
+    "add-u": "Add user",
+    "update-u": "Update a user",
+    "get-u-i": "Get user image",
+    "get-u": "Get user", 
+    "delete-u": "Delete user",
+    "add-d": "Add duty",
+    "assign-s-d": "Assign special duties",
+    "get-a-d": "Get assigned duties", 
+    "get-d": "Get duties",
+    "update-d": "Update duty",
+    "view-a-d": "View assigned duty",
+    "delete-d": "Delete duty"
+})
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -38,29 +51,9 @@ def get_password_hash(password: str) -> str:
     '''Returns a hash of the `password`'''
     return pwd_context.hash(password)
 
-async def get_user(username: str):
+async def get_user(username: str) -> Staff | None:
     
-    user_in_db = await database.users.find_one({"_id": username})
-    
-    if user_in_db:
-        
-        if user_in_db.get("type") == "learner":
-            user_in_db = LearnerInDB(**user_in_db).model_dump()
-            user_in_db.update({
-                "type": user_in_db.get("type").value,
-                "block": user_in_db.get("block").value
-            })
-            
-            return user_in_db
-            
-        elif user_in_db.get("type") == "staff":
-            user_in_db = StaffInDB(**user_in_db).model_dump()
-            user_in_db.update({
-                "type": user_in_db.get("type").value,
-                "role": user_in_db.get("role").value
-            })
-            
-            return user_in_db
+    user_in_db = await Staff.find_one(Staff.id == username)
         
     return user_in_db
 
@@ -70,7 +63,7 @@ async def authenticate_user(username: str, password: str):
     
     if not user:
         return False
-    if not verify_password(password, user.get("password")):
+    if not verify_password(password, user.password):
         return False
     return user
 
@@ -80,11 +73,20 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
+        expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    to_encode.update({'exp': expire.timestamp()})   #* Add expiration time to payload
     
-    return encoded_jwt
+    to_encode = json.dumps(to_encode).encode('utf-8') #* Convert payload to bytes
+    
+    #* Create a JWE token
+    encoded_jwe = jwe.encrypt(
+        to_encode,
+        os.getenv("SECRET_KEY"),
+        algorithm='dir',
+        encryption='A256GCM'
+    )
+    
+    return encoded_jwe
 
 
 async def get_current_user(security_scopes: SecurityScopes, token: Annotated[str, Depends(oauth2_scheme)]):
@@ -100,11 +102,23 @@ async def get_current_user(security_scopes: SecurityScopes, token: Annotated[str
         headers={"WWW-Authenticate": authenticate_value},
     )
     try:
-        payload = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=os.getenv("ALGORITHM"))
-        username: str = payload.get("sub")
+        #* Decrypt the JWE token
+        token_bytes = token.encode('utf-8')
+        payload_bytes = jwe.decrypt(token_bytes, os.getenv("SECRET_KEY"))
+        payload: dict = json.loads(payload_bytes)
+        
+        username = payload.get("sub")
+        exp = payload.get("exp")
+        token_scopes: list = payload.get("scopes")
+        token_data = TokenData(scopes=token_scopes, username=username)
+        
         if username is None:
             raise credentials_exception
-        token_scopes = payload.get("scopes")
+        
+        #* Validate that the token has not expired
+        if exp is None or datetime.now(timezone.utc).timestamp() > exp:
+            raise ExpiredSignatureError
+        
         token_data = TokenData(scopes=token_scopes, username=username)
     except (InvalidTokenError, ValidationError):
         raise credentials_exception
@@ -113,9 +127,12 @@ async def get_current_user(security_scopes: SecurityScopes, token: Annotated[str
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Your token has expired"
         )
+    
     user = await get_user(username=token_data.username)
+    
     if user is None:
         raise credentials_exception
+    
     for scope in security_scopes.scopes:
         if scope not in token_data.scopes:
             raise HTTPException(

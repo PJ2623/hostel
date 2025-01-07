@@ -1,106 +1,109 @@
+from pprint import pprint
 import secrets
+
+from beanie import PydanticObjectId
+
+from io import BytesIO
+
+from datetime import datetime
+
+from bson.errors import InvalidId
 
 from datetime import datetime
 
 from fastapi import HTTPException, status
 
-from models.responses import LearnerInDB, StaffInDB
+from models.duty import AssignedDuties, Duties
+from models.staff import Staff
+from models.learner import Learners
+from utils.models import DefaultDocs
 
-def serialize_user_in_db(user_in_db: dict):
-    '''Serializes `user_in_db`
 
-    Args:
-        user_in_db (`dict`): The user document retrieved from the database
+USER_NOT_FOUND_EXCEPTION = HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User not found"
+            )
 
-    Returns:
-        `dict`: returns `user_in_db`
-    '''
-    if user_in_db.get("type") == "learner":
-        
-        user_in_db = LearnerInDB(**user_in_db).model_dump(exclude=["password", "image", "permissions", "active"])
-        user_in_db.update({"type": user_in_db.get("type").value, "block": user_in_db.get("block").value})
-        
-    elif user_in_db.get("type") == "staff":
-        
-        user_in_db = StaffInDB(**user_in_db).model_dump(exclude=["password", "image", "permissions", "active"])
-        user_in_db.update({"type": user_in_db.get("type").value, "role": user_in_db.get("role").value})
-        
-    return user_in_db
     
+async def assign_duties_to_learners(learners: list[Learners], duties: list[dict]):
+    '''
+    Assigns `duties` to `learners`
+    '''
+    assigned_duties: list[AssignedDuties] = []
+    current_date = datetime.now()
+        
+    for duty in duties:
+        
+        while not duty["participants"] == 0:
+            random_learner = secrets.choice(learners)
+            
+            #* Ensure learners are not assigned duties they were assigned previously
+            while random_learner.last_duty == duty.get("id"):
+                random_learner = secrets.choice(learners)
+            
+            assigned_duties.append(AssignedDuties(
+                learner_details=random_learner.model_dump(exclude=["present", "image"]),
+                assigned_duty=duty.get("id"),
+                week_day=current_date.weekday(),
+                day=current_date.day,
+                month=current_date.month,
+                year=current_date.year,
+                completed=False
+            ))
+
+            #* Update participants for duty         
+            duty["participants"] -= 1
     
-def assign_duties_to_learners(learners: list, duties: list):
-    '''
-    Assigns `duties` to `learners`    
-    '''
-    assigned_duties = []
+    for duty in assigned_duties:
+        await duty.save()
+
+
+async def assign_saturday_duties():
+    """Assigns Saturday duties"""
+    duties_in_db = Duties.find_many()
+    duties = [] #* Convert Duties documents to dictionaries
+    
+    default_duty = await DefaultDocs.find_one(DefaultDocs.id == "total-participants")
+    
+    learners_in_db = Learners.find(Learners.present == True)
+    learners = []
+    
+    async for learner in learners_in_db:
+        learners.append(learner)
         
-    for learner in learners:
-        random_duty = secrets.choice(duties)
+    async for duty in duties_in_db:
+        duties.append(duty.model_dump())
         
-        # * Check if duty has been assigned to max participants
-        if random_duty.get("participants") == 0:
-            duties.remove(random_duty)
-            random_duty = secrets.choice(duties) # * Choose another duty
-        
-        assigned_duties.append({
-            "_id": learner,
-            "assigned-duty": random_duty.get("_id"),
-            "date": datetime.now().isoformat(),
-            "completed": False
-        })
-        
-        # * Reducing the participants of the duty
-        random_duty.update({
-            "participants": random_duty.get("participants") - 1
-        })
-        
-    return assigned_duties
+    
+    if not len(learners) == default_duty.total:
+        return
+    
+    await assign_duties_to_learners(learners, duties)
 
 
 async def get_learners_in_blocks(block1: str, block2:str):
     '''
-    Retrieves all learners in `block1` and `block2`    
-    '''
-    learners = []
-    learners_in_db = database.users.find({"block": {"$in": [block1, block2]}})
-    
-    for learner in await learners_in_db.to_list(None):
-        learner = LearnerInDB(**learner).model_dump(exclude=["password", "image", "active", "permissions", "type"])
-        learner.update({"block": learner.get("block").value})
-        learners.append(learner)
-        
-    return learners
-
-
-async def find_user(id: str, role: str) -> dict:
-    '''
-    Retrieves a user from the database with `id` and `role`    
+    Retrieves all learners in `block1` and `block2`
+    which a `sr-matron` or `jr-matron` may be in charge of
     '''
     pass
- 
 
-def is_user_accessing_own_account(id: str, current_user_id: str):
+
+async def get_learner_or_staff(id: str) -> Staff | Learners | None:
     '''
-    Ensures user is accessing their own account. If
-    `id` and `current_user_id` are not equal it raises `HTTPException`
+    Retrieves a learner or staff from the database with `id`
     '''
-    if not id == str(current_user_id):
+    
+    try:
+        user_in_db = await Learners.find_one(Learners.id == PydanticObjectId(id))
+
+        return user_in_db
+    except ConnectionError:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot perform action"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Oops, you cannot perform this action at the moment"
         )
-
-   
-async def update_a_user(id: str, role: str, update_data):
-    '''
-    Updates a user from the database that the user with `id` and `role`
-    Is allowed to update
-    '''
-    if role == "super-user":
-        update_response = await database.users.update_one({'_id': id}, {"$set": update_data})
-    elif role == "jr-matron":
-        update_response = await database.users.update_one({'_id': id, "type": "learner", "block": {"$in": ["A", "B"]}}, {"$set": update_data})
-    else:
-        update_response = await database.users.update_one({'_id': id, "type": "learner", "block": {"$in": ["C", "D"]}}, {"$set": update_data})
+    except InvalidId:
+        user_in_db = await Staff.find_one(Staff.id == id)
         
-    return update_response
+        return user_in_db
