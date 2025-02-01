@@ -2,6 +2,7 @@ from pprint import pprint
 import secrets
 
 from beanie import PydanticObjectId
+from beanie.operators import Or
 
 from io import BytesIO
 
@@ -20,7 +21,7 @@ from utils.models import DefaultDocs
 
 
 USER_NOT_FOUND_EXCEPTION = HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
 
@@ -50,9 +51,9 @@ async def assign_duties_to_learners(learners: list[Learners], duties: list[dict]
                 year=current_date.year,
                 completed=False
             ))
-
-            #* Update participants for duty         
-            duty["participants"] -= 1
+         
+            duty["participants"] -= 1 #* Update participants for duty
+            learners.remove(random_learner) #* Remove learner, to avoid multiple duty assignment
     
     for duty in assigned_duties:
         await duty.save()
@@ -65,11 +66,7 @@ async def assign_saturday_duties():
     
     default_duty = await DefaultDocs.find_one(DefaultDocs.id == "total-participants")
     
-    learners_in_db = Learners.find(Learners.present == True)
-    learners = []
-    
-    async for learner in learners_in_db:
-        learners.append(learner)
+    learners = await Learners.find(Learners.present == True).to_list()
         
     async for duty in duties_in_db:
         duties.append(duty.model_dump())
@@ -81,12 +78,18 @@ async def assign_saturday_duties():
     await assign_duties_to_learners(learners, duties)
 
 
-async def get_learners_in_blocks(block1: str, block2:str):
+async def get_learners_in_blocks(first_block: str, second_block:str):
     '''
     Retrieves all learners in `block1` and `block2`
     which a `sr-matron` or `jr-matron` may be in charge of
     '''
-    pass
+    learners: list[dict] = []
+    learners_in_db = await Learners.find(Or(Learners.block == first_block, Learners.block == second_block)).to_list()
+    
+    for learner in learners_in_db:
+        learners.append(learner.model_dump(exclude=["image"]))
+    
+    return learners
 
 
 async def get_learner_or_staff(id: str) -> Staff | Learners | None:

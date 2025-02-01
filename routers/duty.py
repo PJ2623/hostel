@@ -22,6 +22,7 @@ from schemas.duty import NewDuty, SpecialDuties, NewDutyResponse, GetAssignedDut
 from models.duty import Duties
 from utils.models import DefaultDocs
 from models.duty import AssignedDuties
+from models.staff import Staff
 
 from models.learner import Learners
 
@@ -32,7 +33,7 @@ router = APIRouter(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=NewDutyResponse)
-async def add_duty(request: NewDuty):
+async def add_duty(request: NewDuty, current_user: Annotated[Staff, Security(get_current_active_user, scopes=["add-d"])]):
     """Add a duty to the database"""
     try:
         default_duty = await DefaultDocs.find_one(DefaultDocs.id == "total-participants")
@@ -65,7 +66,7 @@ async def add_duty(request: NewDuty):
     
 
 @router.post("/assign", response_model=GenericResponse)
-async def assign_special_duties(request: SpecialDuties):
+async def assign_special_duties(request: SpecialDuties, current_user: Annotated[Staff, Security(get_current_active_user, scopes=["assign-s-d"])]):
     learners = await Learners.find(Learners.present == True).to_list()
     duties: list[dict] = [duty.model_dump() for duty in request.duties]
     total_participants = 0
@@ -102,15 +103,34 @@ async def assign_special_duties(request: SpecialDuties):
         
         
 @router.post("/mark")
-async def mark_assigned_duties(learners: Annotated[list[str], Body(description="The id of the learner", examples=[["677ab82e0fcee570714969b3"]])]):
+async def mark_assigned_duties(learners: Annotated[list[str], Body(description="The id of the learner", examples=[["677ab82e0fcee570714969b3"]])], current_user: Annotated[Staff, Security(get_current_active_user, scopes=["mark-d"])]):
     """
     Marks the `completed` field for documents in `AssignedDuties` for
     learner id in `learners`. It does this for documents with `day`,
     `month` and `year` of the current date.
     """
     current_date = datetime.now()
+    
+    if not learners:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status": "fail",
+                "message": "Provide learner IDs"
+            }
+        )
 
     for learner_id in learners:
+        learner_in_db = await Learners.get(PydanticObjectId(learner_id))
+        
+        user_role = current_user.role
+        block = learner_in_db.block
+        
+        #* Checks if user provided an ID for a non existent learner or is trying to mark duties
+        #* for a learner not in their designated blocks, if so the learner ID will be skipped
+        if not learner_in_db or (user_role == "jr-matron" and (block == "C" or block == "D")) or (user_role == "sr-matron" and (block == "A" or block == "B")):
+            continue
+        
         assigned_duty = await AssignedDuties.find_one(
             And(
                 AssignedDuties.learner_details.id == learner_id,
@@ -136,9 +156,11 @@ async def mark_assigned_duties(learners: Annotated[list[str], Body(description="
        
        
 @router.get("/assign", response_model=GetAssignedDutiesResponse)
-async def get_assigned_duties():
+async def get_assigned_duties(current_user: Annotated[Staff, Security(get_current_active_user, scopes=["get-a-d"])]):
     """Retrieves all duties assigned to learners for the current date"""
     current_date = datetime.now()
+    user_role = current_user.role
+    duties = []    
     
     assigned_duties = await AssignedDuties.find(
         And(
@@ -156,9 +178,17 @@ async def get_assigned_duties():
                 "message": "No duties assigned for today"
             }
         )
-
-    duties = [duty.model_dump() for duty in assigned_duties]
+        
+    for duty in assigned_duties:
     
+        block = duty.learner_details.get("block")
+        
+        #* Filters returned records to ensure only receives records of their designated blocks
+        if (user_role == "jr-matron" and (block == "C" or block == "D")) or (user_role == "sr-matron" and (block == "A" or block == "B")):
+            continue
+        
+        duties.append(duty.model_dump())
+
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
@@ -169,7 +199,7 @@ async def get_assigned_duties():
 
 
 @router.get("")
-async def get_duties(id: Annotated[str | None, Query(description="The name of the duty", min_length=6, max_length=50)] = None):
+async def get_duties(current_user: Annotated[Staff, Security(get_current_active_user, scopes=["get-d"])], id: Annotated[str | None, Query(description="The name of the duty", min_length=6, max_length=50)] = None):
     """Get all duties or a specific duty by `id`"""
     
     

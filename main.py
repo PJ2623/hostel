@@ -12,7 +12,7 @@ from utils.helpers import assign_saturday_duties
 
 from contextlib import asynccontextmanager
 
-from routers import duty, staff, auth, learner
+from routers import duty, staff, auth, learner, attendance
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
@@ -21,6 +21,7 @@ from models.duty import AssignedDuties, Duties
 from models.learner import Learners
 from models.staff import Staff
 from utils.models import DefaultDocs
+from models.attendance import Attendance
 
 
 @asynccontextmanager
@@ -29,11 +30,11 @@ async def lifespan(app: FastAPI):
     
     #* Create a scheduler to assign duties to learners every Saturday at midnight
     scheduler = AsyncIOScheduler()
-    trigger = CronTrigger(hour=0, minute=53)
+    trigger = CronTrigger(hour=3, minute=15)
     
     scheduler.add_job(assign_saturday_duties, trigger)
     
-    await init_beanie(database=client["hostelManagement"], document_models=[Duties, Learners, Staff, DefaultDocs, AssignedDuties])
+    await init_beanie(database=client["hostelManagement"], document_models=[Duties, Learners, Staff, DefaultDocs, AssignedDuties, Attendance])
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -59,6 +60,7 @@ app.include_router(staff.router)
 app.include_router(duty.router)
 app.include_router(learner.router)
 app.include_router(auth.router)
+app.include_router(attendance.router)
 
 if __name__ == "__main__":
     uvicorn.run(

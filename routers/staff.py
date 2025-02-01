@@ -39,10 +39,20 @@ async def add_staff(
     role: Annotated[str, Form(description="The position of the new staff member")],
     password: Annotated[str, Form(description="The password to be used to log into the account")],
     verify_password: Annotated[str, Form(description="Should match `password`")],
+    current_user: Annotated[Staff, Security(get_current_active_user, scopes=["add-u"])]
 ):
     """Create new staff account 
     """
-    
+    permissions = ["me"]
+    if current_user.role == "chief-matron" and (role == "chief-matron" or role == "super-user"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "failed",
+                "message":"You do not have permission to create this account"
+            }
+        )
+        
     try:
         request = NewStaff(
             first_name=first_name,
@@ -53,6 +63,26 @@ async def add_staff(
             verify_password=verify_password
         )
         
+        if request.role == "chief-matron" or request.role == "super-user":
+            permissions.append("add-u")
+            permissions.append("update-u")
+            permissions.append("get-u-i")
+            permissions.append("get-u")
+            permissions.append("delete-u")
+        elif request.role == "jr-matron" or request.role == "sr-matron":
+            permissions.append("get-l-i")
+            permissions.append("get-l")
+            permissions.append("add-d")
+            permissions.append("assign-s-d")
+            permissions.append("get-a-d")
+            permissions.append("add-l")
+            permissions.append("get-d")
+            permissions.append("mark-d")
+            permissions.append("mark-a")
+            permissions.append("get-a")
+            permissions.append("get-u")
+            permissions.append("delete-l")
+        
         new_staff = Staff(
             image=profile.file.read(),
             id=request.username,
@@ -60,7 +90,7 @@ async def add_staff(
             last_name=request.last_name,
             role=request.role,
             password=get_password_hash(request.password),
-            permissions=["me"]
+            permissions=permissions
         )
         
         await new_staff.save()
@@ -93,9 +123,18 @@ async def add_staff(
         
         
 @router.get('/{id}/image')
-async def get_staff_image(id: Annotated[str, Path(min_length=4, max_length=20, description='`id` of the user')]):
+async def get_staff_image(id: Annotated[str, Path(min_length=4, max_length=20, description='`id` of the user')], current_user: Annotated[Staff, Security(get_current_active_user, scopes=["get-u-i"])]):
     try:
         user_in_db = await Staff.find_one(Staff.id == id)
+        
+        if current_user.role == "chief-matron" and user_in_db.role == "super-user":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "status": "failed",
+                    "message":"You do not have permission to view this image"
+                }
+            )
 
         if not user_in_db:
             raise USER_NOT_FOUND_EXCEPTION
@@ -109,17 +148,46 @@ async def get_staff_image(id: Annotated[str, Path(min_length=4, max_length=20, d
 
 
 @router.get('/{id}')
-async def get_staff(id: Annotated[str, Path(min_length=4, max_length=20, description='`id` of the user')]):
+async def get_staff(id: Annotated[str, Path(min_length=4, max_length=20, description='`id` of the user')], current_user: Annotated[Staff, Security(get_current_active_user, scopes=["get-u"])]):
     staff_in_db = await get_learner_or_staff(id)
     
+    user_role = current_user.role
+    
     if not staff_in_db or not isinstance(staff_in_db, Staff):
+        raise USER_NOT_FOUND_EXCEPTION
+    
+    if staff_in_db.role == "super-user" and user_role == "chief-matron":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "failed",
+                "message":"You do not have permission to view this account"
+            }
+        )
+    
+    #* Ensure jr and sr matrons can only access their accounts
+    if (user_role == "jr-matron" or user_role == "sr-matron") and not (current_user.id == str(staff_in_db.id)):
         raise USER_NOT_FOUND_EXCEPTION
         
     return staff_in_db.model_dump(exclude=["image", "password", "permissions", "active"])
             
 
 @router.delete('/{id}')
-async def delete_staff(id: Annotated[str, Path(min_length=4, max_length=20, description='`id` of the user')]):
+async def delete_staff(id: Annotated[str, Path(min_length=4, max_length=20, description='`id` of the user')], current_user: Annotated[Staff, Security(get_current_active_user, scopes=["delete-u"])]):
+    staff_to_delete = await Staff.get(id)
+    
+    if not staff_to_delete:
+        raise USER_NOT_FOUND_EXCEPTION
+    
+    if staff_to_delete.role == "super-user" and current_user.role == "chief-matron":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "failed",
+                "message":"You do not have permission to delete this account"
+            }
+        )
+        
     delete_response = await Staff.delete(Staff.id == id)
     
     if delete_response.deleted_count == 0:

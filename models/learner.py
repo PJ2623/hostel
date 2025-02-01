@@ -13,7 +13,7 @@ class Learners(Document, UserBaseModel):
     room: Annotated[int, Field(ge=1, le=6)]
     block: Literal["A", "B", "C", "D"]
     present: bool = True
-    last_duty: str
+    last_duty: str = ""
     
     @field_serializer("id")
     def convert_pydantic_object_id_to_string(self, id:PydanticObjectId):

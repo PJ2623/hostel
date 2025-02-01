@@ -38,7 +38,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", scopes={
     "get-d": "Get duties",
     "update-d": "Update duty",
     "view-a-d": "View assigned duty",
-    "delete-d": "Delete duty"
+    "delete-d": "Delete duty",
+    "get-l-i": "Get learner image",
+    "get-l": "Get learner",
+    "add-l": "Add learner",
+    "mark-d": "Marking duty completion",
+    "mark-a": "Mark attendance for an activity",
+    "get-a": "Get attendance",
+    "delete-l": "Delete a learner"
 })
 
 
@@ -143,7 +150,7 @@ async def get_current_user(security_scopes: SecurityScopes, token: Annotated[str
     return user
 
 
-async def get_current_active_user(current_user: Annotated[dict, Security(get_current_user, scopes=["me"])]):
-    if not current_user.get("active"):
+async def get_current_active_user(current_user: Annotated[Staff, Security(get_current_user, scopes=["me"])]):
+    if not current_user.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is inactive")
     return current_user
